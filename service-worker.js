@@ -199,7 +199,7 @@ async function getTabDubbingStatus(tabId) {
   };
 }
 
-async function startDubbing(message, sender, streamIdPromise, replacementStop) {
+async function startDubbing(message, sender) {
   const tabId = sender.tab?.id;
   const frameId = sender.frameId;
   if (typeof tabId !== "number" || typeof frameId !== "number") {
@@ -225,8 +225,8 @@ async function startDubbing(message, sender, streamIdPromise, replacementStop) {
     throw new Error("Trang này không cho phép extension thu âm.");
   }
 
-  const streamId = await streamIdPromise;
-  await replacementStop;
+  await stopActiveSession("replace");
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   const session = {
     sessionId: crypto.randomUUID(),
     tabId,
@@ -302,17 +302,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: "Không xác định được tab video." });
       return false;
     }
-    const replacementStop = stopActiveSession("replace");
-    let streamIdPromise;
-    try {
-      streamIdPromise = chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    } catch (error) {
-      replacementStop
-        .then(() => sendResponse({ ok: false, error: error.message }))
-        .catch((stopError) => sendResponse({ ok: false, error: stopError.message }));
-      return true;
-    }
-    startDubbing(message, sender, streamIdPromise, replacementStop)
+    startDubbing(message, sender)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
