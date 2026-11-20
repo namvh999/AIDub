@@ -18,5 +18,6 @@ Extension tự nhận diện ngôn ngữ đang nói. [Gemini Live Translation](h
 - API key được lưu cục bộ trong extension và tự điền lại khi mở popup. Âm thanh của cả tab được truyền trực tiếp tới Gemini Live API của Google trong khi lồng tiếng; không được gửi tới máy chủ của dự án này.
 - Chrome yêu cầu người dùng cấp quyền trên từng tab: mở popup và bấm **Bật cho trang này** một lần trên website đó, sau đó mới bấm video. Extension tự khôi phục trạng thái bật khi tải lại trang cùng website; tab mới hoặc website khác vẫn cần được bật riêng.
 - Extension cần thu âm tab và truy cập được phần tử video. Trang nội bộ của trình duyệt, một số video DRM hoặc video trong iframe khác nguồn có thể không hoạt động.
+- Khi tua video, extension xóa âm thanh dịch đang chờ và kết nối lại Gemini sau khi thao tác tua ổn định; lời thoại trong khoảng kết nối lại có thể không được dịch.
 - Âm thanh dịch có thể chậm hơn hình ảnh một chút; độ trễ và chất lượng phụ thuộc kết nối mạng và Gemini Live API.
 - Chủ tài khoản chịu trách nhiệm về mức sử dụng và chi phí API.

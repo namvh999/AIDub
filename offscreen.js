@@ -2,6 +2,7 @@ const LIVE_MODEL = "gemini-3.5-live-translate-preview";
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 const INPUT_BUFFER_SIZE = 2048;
+const SEEK_RECONNECT_DELAY_MS = 150;
 let activeCapture = null;
 
 function stopPlayingSources(session) {
@@ -32,6 +33,11 @@ function stopCapture(sessionId) {
   }
   activeCapture = null;
   session.stopped = true;
+  session.seekGeneration += 1;
+  if (session.seekTimer !== null) {
+    clearTimeout(session.seekTimer);
+    session.seekTimer = null;
+  }
 
   stopPlayingSources(session);
 
@@ -309,6 +315,9 @@ async function startLiveTranslation(message) {
     websocket: null,
     stopped: false,
     reconfiguring: false,
+    seekPending: false,
+    seekGeneration: 0,
+    seekTimer: null,
     apiKey: message.geminiApiKey,
     targetLanguageCode: message.targetLanguageCode,
     playingSources: new Set(),
@@ -343,6 +352,70 @@ async function startLiveTranslation(message) {
   } catch (error) {
     stopCapture(message.sessionId);
     throw error;
+  }
+}
+
+function handleVideoSeek(message) {
+  const session = activeCapture;
+  if (!session || session.sessionId !== message.sessionId) {
+    return;
+  }
+
+  if (message.phase === "start") {
+    session.seekGeneration += 1;
+    session.seekPending = true;
+    if (session.seekTimer !== null) {
+      clearTimeout(session.seekTimer);
+      session.seekTimer = null;
+    }
+
+    session.reconfiguring = true;
+    stopPlayingSources(session);
+    const previousSocket = session.websocket;
+    session.websocket = null;
+    if (previousSocket?.readyState < WebSocket.CLOSING) {
+      previousSocket.close(1000, "Video seek");
+    }
+    return;
+  }
+
+  if (message.phase === "end" && session.seekPending) {
+    if (session.seekTimer !== null) {
+      clearTimeout(session.seekTimer);
+    }
+    const generation = session.seekGeneration;
+    session.seekTimer = setTimeout(() => {
+      session.seekTimer = null;
+      reconnectAfterVideoSeek(session, generation);
+    }, SEEK_RECONNECT_DELAY_MS);
+    return;
+  }
+
+  if (message.phase !== "end") {
+    throw new Error("Sự kiện tua video không hợp lệ.");
+  }
+}
+
+async function reconnectAfterVideoSeek(session, generation) {
+  if (activeCapture !== session || session.stopped
+    || !session.seekPending || generation !== session.seekGeneration) {
+    return;
+  }
+
+  try {
+    await connectGeminiLive(session, session.apiKey, session.targetLanguageCode);
+    if (activeCapture !== session || session.stopped
+      || !session.seekPending || generation !== session.seekGeneration) {
+      return;
+    }
+    session.seekPending = false;
+    session.reconfiguring = false;
+  } catch (error) {
+    if (activeCapture !== session || session.stopped || generation !== session.seekGeneration) {
+      return;
+    }
+    reportDubbingError(session, error);
+    stopCapture(session.sessionId);
   }
 }
 
@@ -400,6 +473,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
+  }
+
+  if (message.type === "HANDLE_VIDEO_SEEK") {
+    try {
+      handleVideoSeek(message);
+      sendResponse({ ok: true });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+    }
+    return false;
   }
 
   return false;

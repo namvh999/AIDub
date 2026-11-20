@@ -333,6 +333,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "VIDEO_SEEKING" || message.type === "VIDEO_SEEKED") {
+    const senderTabId = sender.tab?.id;
+    (async () => {
+      if (!activeSession) {
+        const stored = await chrome.storage.session.get("activeSession");
+        activeSession = stored.activeSession || null;
+      }
+      if (activeSession?.sessionId !== message.sessionId
+        || activeSession.tabId !== senderTabId
+        || activeSession.frameId !== sender.frameId) {
+        return;
+      }
+      const response = await chrome.runtime.sendMessage({
+        type: "HANDLE_VIDEO_SEEK",
+        sessionId: message.sessionId,
+        phase: message.type === "VIDEO_SEEKING" ? "start" : "end"
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error || "Không thể đồng bộ lồng tiếng sau khi tua.");
+      }
+    })()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === "DUBBING_TEXT") {
     notifyFrame(message.sessionId, "DUBBING_TEXT", message.text)
       .then(() => sendResponse({ ok: true }))

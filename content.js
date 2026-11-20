@@ -11,6 +11,7 @@
   let targetLanguageName = "";
   let activeSessionId = null;
   let isStopPending = false;
+  let isSeeking = false;
   let pendingPlayingVideo = null;
   let video = null;
   let selectedVideo = null;
@@ -168,6 +169,7 @@
   }
 
   function detachVideoListeners() {
+    isSeeking = false;
     if (!video || !videoListeners) {
       videoListeners = null;
       return;
@@ -205,6 +207,16 @@
     });
   }
 
+  function notifyVideoSeek(type, sessionId) {
+    chrome.runtime.sendMessage({ type, sessionId })
+      .then((response) => {
+        if (!response?.ok) {
+          console.warn(`Unable to notify the dubbing session about ${type}:`, response?.error);
+        }
+      })
+      .catch((error) => console.warn(`Unable to notify the dubbing session about ${type}:`, error));
+  }
+
   function attachVideoListeners() {
     detachVideoListeners();
     if (!video) {
@@ -215,6 +227,23 @@
       video.addEventListener(eventName, listener);
       return [eventName, listener];
     });
+    const onSeeking = () => {
+      if (!isDubbingActive || !activeSessionId || isSeeking) {
+        return;
+      }
+      isSeeking = true;
+      notifyVideoSeek("VIDEO_SEEKING", activeSessionId);
+    };
+    const onSeeked = () => {
+      if (!isDubbingActive || !activeSessionId || !isSeeking) {
+        return;
+      }
+      isSeeking = false;
+      notifyVideoSeek("VIDEO_SEEKED", activeSessionId);
+    };
+    video.addEventListener("seeking", onSeeking);
+    video.addEventListener("seeked", onSeeked);
+    videoListeners.push(["seeking", onSeeking], ["seeked", onSeeked]);
   }
 
   async function requestDubbing(clickedVideo, pauseVideo = true) {
