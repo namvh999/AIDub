@@ -106,6 +106,32 @@ function notifyTranscript(session, text) {
   }).catch((error) => console.warn("Unable to display dubbed speech text:", error));
 }
 
+function isVietnameseTranscript(text) {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = text.normalize("NFC").toLowerCase();
+  if (/[ăâđêôơưàảãáạằẳẵắặầẩẫấậèẻẽéẹềểễếệìỉĩíịòỏõóọồổỗốộờởỡớợùủũúụừửữứựỳỷỹýỵ]/u.test(normalized)) {
+    return true;
+  }
+
+  const words = normalized.match(/[a-z]+/g) || [];
+  if (words.length === 0) {
+    return false;
+  }
+
+  const vietnameseWords = new Set([
+    "toi", "tui", "ban", "anh", "chi", "em", "noi", "nói",
+    "la", "là", "dang", "đang", "voi", "với", "khong", "không",
+    "co", "có", "mot", "một", "hai", "ba", "nay", "này",
+    "day", "đây", "cua", "của", "cho", "duoc", "được",
+    "nguoi", "người", "minh", "mình", "tai", "tại", "se", "sẽ"
+  ]);
+  const matches = words.filter((word) => vietnameseWords.has(word)).length;
+  return matches >= 2 || (words.length <= 5 && matches >= 1);
+}
+
 function playPcmAudio(session, base64Audio) {
   if (session.stopped || activeCapture !== session || session.reconfiguring) {
     return;
@@ -141,12 +167,26 @@ function handleLiveMessage(session, message) {
   if (!content) {
     return;
   }
-  if (content.outputTranscription?.text) {
+  if (session.targetLanguageCode === "vi" && content.inputTranscription?.text) {
+    if (isVietnameseTranscript(content.inputTranscription.text)) {
+      session.skipTranslationTurn = true;
+      if (session.originalAudioGain) {
+        session.originalAudioGain.gain.setTargetAtTime(1, session.audioContext.currentTime, 0.02);
+      }
+    }
+  }
+  if (!session.skipTranslationTurn && content.outputTranscription?.text) {
     notifyTranscript(session, content.outputTranscription.text);
   }
   for (const part of content.modelTurn?.parts || []) {
-    if (part.inlineData?.data) {
+    if (!session.skipTranslationTurn && part.inlineData?.data) {
       playPcmAudio(session, part.inlineData.data);
+    }
+  }
+  if (content.turnComplete || content.interrupted) {
+    session.skipTranslationTurn = false;
+    if (session.originalAudioGain && session.targetLanguageCode === "vi") {
+      session.originalAudioGain.gain.setTargetAtTime(0.12, session.audioContext.currentTime, 0.02);
     }
   }
 }
@@ -204,13 +244,16 @@ function connectGeminiLive(session, apiKey, targetLanguageCode) {
 
     websocket.addEventListener("open", () => {
       try {
+        const systemInstruction = targetLanguageCode === "vi"
+          ? "Translate the incoming speech naturally into Vietnamese. If the incoming speech is already Vietnamese, do not translate it and produce no translated audio or transcript."
+          : "Translate the incoming speech naturally into the requested target language. Preserve the speaker's meaning and conversational tone.";
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${LIVE_MODEL}`,
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             systemInstruction: {
-              parts: [{ text: "Translate the incoming speech naturally into the requested target language. Preserve the speaker's meaning and conversational tone." }]
+              parts: [{ text: systemInstruction }]
             },
             generationConfig: {
               responseModalities: ["AUDIO"],
@@ -318,6 +361,8 @@ async function startLiveTranslation(message) {
     seekPending: false,
     seekGeneration: 0,
     seekTimer: null,
+    originalAudioGain,
+    skipTranslationTurn: false,
     apiKey: message.geminiApiKey,
     targetLanguageCode: message.targetLanguageCode,
     playingSources: new Set(),
