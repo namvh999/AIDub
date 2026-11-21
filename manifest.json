@@ -2,10 +2,11 @@
   "manifest_version": 3,
   "name": "Gemini Video Dubbing",
   "version": "1.2.3",
-  "description": "Lồng tiếng video đang phát theo thời gian thực bằng Gemini. Tự động bỏ qua quảng cáo Youku.",
+  "description": "Lồng tiếng video theo thời gian thực bằng Gemini; hỗ trợ lọc quảng cáo YouTube và tự bỏ qua quảng cáo Youku.",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
+    "declarativeNetRequest",
     "offscreen",
     "scripting",
     "storage",
@@ -13,12 +14,35 @@
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
+    "http://*/*",
+    "https://*/*",
+    "https://*.youtube.com/*",
     "https://*.youku.com/*"
   ],
   "content_scripts": [
     {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["ad-filter.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
       "matches": ["https://*.youku.com/*"],
       "js": ["youku-ad-skip.js"],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*.youtube.com/*"],
+      "js": ["youtube-ad-filter.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://*.youtube.com/*"],
+      "js": ["youtube-main-world.js"],
       "run_at": "document_start",
       "all_frames": false,
       "world": "MAIN"

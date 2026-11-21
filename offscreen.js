@@ -3,6 +3,7 @@ const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 const INPUT_BUFFER_SIZE = 2048;
 const SEEK_RECONNECT_DELAY_MS = 150;
+const MAX_LIVE_RECONNECT_ATTEMPTS = 5;
 let activeCapture = null;
 
 function stopPlayingSources(session) {
@@ -37,6 +38,10 @@ function stopCapture(sessionId) {
   if (session.seekTimer !== null) {
     clearTimeout(session.seekTimer);
     session.seekTimer = null;
+  }
+  if (session.reconnectTimer !== null) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 
   stopPlayingSources(session);
@@ -132,8 +137,21 @@ function isVietnameseTranscript(text) {
   return matches >= 2 || (words.length <= 5 && matches >= 1);
 }
 
+function languageCodesMatch(sourceLanguageCode, targetLanguageCode) {
+  if (typeof sourceLanguageCode !== "string" || typeof targetLanguageCode !== "string") {
+    return false;
+  }
+  const sourceLanguage = sourceLanguageCode.trim().replaceAll("_", "-").toLowerCase();
+  const targetLanguage = targetLanguageCode.trim().replaceAll("_", "-").toLowerCase();
+  if (!sourceLanguage || !targetLanguage) {
+    return false;
+  }
+  return sourceLanguage === targetLanguage
+    || sourceLanguage.split("-")[0] === targetLanguage.split("-")[0];
+}
+
 function playPcmAudio(session, base64Audio) {
-  if (session.stopped || activeCapture !== session || session.reconfiguring) {
+  if (session.stopped || activeCapture !== session || session.reconfiguring || session.videoPlaybackPaused) {
     return;
   }
   const binary = atob(base64Audio);
@@ -167,26 +185,52 @@ function handleLiveMessage(session, message) {
   if (!content) {
     return;
   }
-  if (session.targetLanguageCode === "vi" && content.inputTranscription?.text) {
-    if (isVietnameseTranscript(content.inputTranscription.text)) {
-      session.skipTranslationTurn = true;
+  if (session.adPlaybackActive || session.videoPlaybackPaused) {
+    return;
+  }
+  const inputTranscription = content.inputTranscription;
+  if (inputTranscription?.text || inputTranscription?.languageCode) {
+    const detectedLanguageCode = inputTranscription.languageCode;
+    const sourceMatchesTarget = detectedLanguageCode
+      ? languageCodesMatch(detectedLanguageCode, session.targetLanguageCode)
+      : session.targetLanguageCode === "vi"
+        ? isVietnameseTranscript(inputTranscription.text)
+        : null;
+    if (sourceMatchesTarget !== null) {
+      session.sourceLanguageMatchesTarget = sourceMatchesTarget;
+      session.skipTranslationTurn = sourceMatchesTarget;
+      if (sourceMatchesTarget) {
+        stopPlayingSources(session);
+      }
       if (session.originalAudioGain) {
-        session.originalAudioGain.gain.setTargetAtTime(1, session.audioContext.currentTime, 0.02);
+        session.originalAudioGain.gain.setTargetAtTime(
+          sourceMatchesTarget ? 1 : 0.12,
+          session.audioContext.currentTime,
+          0.02
+        );
       }
     }
   }
-  if (!session.skipTranslationTurn && content.outputTranscription?.text) {
+  if (!session.sourceLanguageMatchesTarget
+    && !session.skipTranslationTurn
+    && content.outputTranscription?.text) {
     notifyTranscript(session, content.outputTranscription.text);
   }
   for (const part of content.modelTurn?.parts || []) {
-    if (!session.skipTranslationTurn && part.inlineData?.data) {
+    if (!session.sourceLanguageMatchesTarget
+      && !session.skipTranslationTurn
+      && part.inlineData?.data) {
       playPcmAudio(session, part.inlineData.data);
     }
   }
   if (content.turnComplete || content.interrupted) {
-    session.skipTranslationTurn = false;
-    if (session.originalAudioGain && session.targetLanguageCode === "vi") {
-      session.originalAudioGain.gain.setTargetAtTime(0.12, session.audioContext.currentTime, 0.02);
+    session.skipTranslationTurn = session.sourceLanguageMatchesTarget;
+    if (session.originalAudioGain) {
+      session.originalAudioGain.gain.setTargetAtTime(
+        session.sourceLanguageMatchesTarget ? 1 : 0.12,
+        session.audioContext.currentTime,
+        0.02
+      );
     }
   }
 }
@@ -230,6 +274,16 @@ function connectGeminiLive(session, apiKey, targetLanguageCode) {
       if (!setupComplete) {
         failureHandled = true;
         clearTimeout(setupTimeout);
+        if (session.websocket === websocket) {
+          session.websocket = null;
+        }
+        try {
+          if (websocket.readyState < WebSocket.CLOSING) {
+            websocket.close();
+          }
+        } catch (closeError) {
+          console.warn("Unable to close a failed Gemini connection:", closeError);
+        }
         reject(error);
         return;
       }
@@ -238,15 +292,18 @@ function connectGeminiLive(session, apiKey, targetLanguageCode) {
       }
       failureHandled = true;
       clearTimeout(setupTimeout);
-      reportDubbingError(session, error);
-      stopCapture(session.sessionId);
+      scheduleLiveReconnect(session, error, websocket);
     };
 
     websocket.addEventListener("open", () => {
       try {
-        const systemInstruction = targetLanguageCode === "vi"
-          ? "Translate the incoming speech naturally into Vietnamese. If the incoming speech is already Vietnamese, do not translate it and produce no translated audio or transcript."
-          : "Translate the incoming speech naturally into the requested target language. Preserve the speaker's meaning and conversational tone.";
+        const systemInstruction = [
+          `Act as a professional simultaneous interpreter. Translate the incoming speech into ${targetLanguageCode} in fluent, natural spoken language.`,
+          "Preserve the complete meaning, intent, names, and factual details while favoring concise phrasing that sounds natural when spoken.",
+          "Remove non-meaningful filler sounds, hesitation words, false starts, and accidental repeated words. Keep repetitions or pauses only when they carry meaning or emotion.",
+          "Do not add an introduction, explanation, summary, speaker label, or words that were not said.",
+          "If the incoming speech is already in the target language, produce no translated audio or transcript."
+        ].join(" ");
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${LIVE_MODEL}`,
@@ -323,6 +380,73 @@ function encodePcm(samples) {
   return btoa(binary);
 }
 
+function scheduleLiveReconnect(session, error, failedSocket = null) {
+  if (activeCapture !== session || session.stopped) {
+    return;
+  }
+  if (failedSocket && session.websocket === failedSocket) {
+    session.websocket = null;
+    try {
+      if (failedSocket.readyState < WebSocket.CLOSING) {
+        failedSocket.close(1000, "Reconnecting Gemini Live");
+      }
+    } catch (closeError) {
+      console.warn("Unable to close a disconnected Gemini socket:", closeError);
+    }
+  }
+
+  session.reconfiguring = true;
+  session.skipTranslationTurn = false;
+  stopPlayingSources(session);
+  if (session.seekPending || session.reconnectTimer !== null) {
+    return;
+  }
+  if (session.reconnectAttempts >= MAX_LIVE_RECONNECT_ATTEMPTS) {
+    reportDubbingError(session, new Error(
+      `Không thể khôi phục kết nối Gemini sau ${MAX_LIVE_RECONNECT_ATTEMPTS} lần thử: ${error.message}`
+    ));
+    stopCapture(session.sessionId);
+    return;
+  }
+
+  session.reconnectAttempts += 1;
+  const delay = Math.min(1000 * (2 ** (session.reconnectAttempts - 1)), 10000);
+  chrome.runtime.sendMessage({
+    type: "DUBBING_TEXT",
+    sessionId: session.sessionId,
+    tabId: session.tabId,
+    frameId: session.frameId,
+    text: "Mất kết nối tạm thời, đang tự kết nối lại…"
+  }).catch((sendError) => console.warn("Unable to show reconnect status:", sendError));
+
+  session.reconnectTimer = setTimeout(async () => {
+    session.reconnectTimer = null;
+    if (activeCapture !== session || session.stopped || session.seekPending) {
+      return;
+    }
+    try {
+      const websocket = await connectGeminiLive(session, session.apiKey, session.targetLanguageCode);
+      if (activeCapture !== session || session.stopped) {
+        return;
+      }
+      if (session.websocket !== websocket || websocket.readyState !== WebSocket.OPEN) {
+        throw new Error("Kết nối Gemini Live đã đóng trong lúc tự khôi phục.");
+      }
+      session.reconnectAttempts = 0;
+      session.reconfiguring = false;
+      chrome.runtime.sendMessage({
+        type: "DUBBING_TEXT",
+        sessionId: session.sessionId,
+        tabId: session.tabId,
+        frameId: session.frameId,
+        text: "Đã kết nối lại, tiếp tục lồng tiếng."
+      }).catch((sendError) => console.warn("Unable to restore dubbing status:", sendError));
+    } catch (reconnectError) {
+      scheduleLiveReconnect(session, reconnectError);
+    }
+  }, delay);
+}
+
 async function startLiveTranslation(message) {
   stopCapture();
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -361,14 +485,32 @@ async function startLiveTranslation(message) {
     seekPending: false,
     seekGeneration: 0,
     seekTimer: null,
+    reconnectTimer: null,
+    reconnectAttempts: 0,
+    adPlaybackActive: false,
+    videoPlaybackPaused: false,
+    lastPlaybackStateSequence: -1,
     originalAudioGain,
     skipTranslationTurn: false,
+    sourceLanguageMatchesTarget: false,
     apiKey: message.geminiApiKey,
     targetLanguageCode: message.targetLanguageCode,
+    targetLanguageName: message.targetLanguageName,
     playingSources: new Set(),
     nextPlaybackTime: 0
   };
   activeCapture = session;
+  audioContext.addEventListener("statechange", () => {
+    if (audioContext.state !== "suspended" || activeCapture !== session || session.stopped) {
+      return;
+    }
+    audioContext.resume().catch((error) => {
+      if (activeCapture === session && !session.stopped) {
+        reportDubbingError(session, new Error(`Không thể tiếp tục xử lý âm thanh: ${error.message}`));
+        stopCapture(session.sessionId);
+      }
+    });
+  });
   stream.getTracks().forEach((track) => track.addEventListener("ended", () => {
     if (activeCapture === session) {
       reportDubbingError(session, new Error("Âm thanh của tab không còn khả dụng."));
@@ -380,7 +522,8 @@ async function startLiveTranslation(message) {
     await audioContext.resume();
     await connectGeminiLive(session, message.geminiApiKey, message.targetLanguageCode);
     processor.onaudioprocess = (event) => {
-      if (session.stopped || session.reconfiguring || activeCapture !== session
+      if (session.stopped || session.reconfiguring || session.adPlaybackActive
+        || session.videoPlaybackPaused || activeCapture !== session
         || session.websocket?.readyState !== WebSocket.OPEN) {
         return;
       }
@@ -413,6 +556,10 @@ function handleVideoSeek(message) {
       clearTimeout(session.seekTimer);
       session.seekTimer = null;
     }
+    if (session.reconnectTimer !== null) {
+      clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = null;
+    }
 
     session.reconfiguring = true;
     stopPlayingSources(session);
@@ -441,6 +588,52 @@ function handleVideoSeek(message) {
   }
 }
 
+function setYouTubeAdPlayback(message) {
+  const session = activeCapture;
+  if (!session || session.sessionId !== message.sessionId || session.tabId !== message.tabId) {
+    return { ok: false, error: "Phiên lồng tiếng YouTube đã thay đổi." };
+  }
+  const active = message.active === true;
+  if (session.adPlaybackActive === active) {
+    return { ok: true };
+  }
+  session.adPlaybackActive = active;
+  if (active) {
+    session.skipTranslationTurn = session.sourceLanguageMatchesTarget;
+    stopPlayingSources(session);
+  }
+  if (session.originalAudioGain) {
+    session.originalAudioGain.gain.setTargetAtTime(
+      active ? 0.12 : session.sourceLanguageMatchesTarget ? 1 : 0.12,
+      session.audioContext.currentTime,
+      0.02
+    );
+  }
+  return { ok: true };
+}
+
+function setVideoPlaybackState(message) {
+  const session = activeCapture;
+  if (!session || session.sessionId !== message.sessionId) {
+    return { ok: false, error: "Phiên lồng tiếng đã thay đổi." };
+  }
+  if (typeof message.paused !== "boolean") {
+    return { ok: false, error: "Trạng thái phát video không hợp lệ." };
+  }
+  if (Number.isSafeInteger(message.sequence)) {
+    if (message.sequence <= session.lastPlaybackStateSequence) {
+      return { ok: true, stale: true };
+    }
+    session.lastPlaybackStateSequence = message.sequence;
+  }
+  session.videoPlaybackPaused = message.paused;
+  if (message.paused) {
+    session.skipTranslationTurn = false;
+    stopPlayingSources(session);
+  }
+  return { ok: true };
+}
+
 async function reconnectAfterVideoSeek(session, generation) {
   if (activeCapture !== session || session.stopped
     || !session.seekPending || generation !== session.seekGeneration) {
@@ -448,19 +641,21 @@ async function reconnectAfterVideoSeek(session, generation) {
   }
 
   try {
-    await connectGeminiLive(session, session.apiKey, session.targetLanguageCode);
+    const websocket = await connectGeminiLive(session, session.apiKey, session.targetLanguageCode);
     if (activeCapture !== session || session.stopped
-      || !session.seekPending || generation !== session.seekGeneration) {
-      return;
+      || !session.seekPending || generation !== session.seekGeneration
+      || session.websocket !== websocket || websocket.readyState !== WebSocket.OPEN) {
+      throw new Error("Kết nối Gemini Live đã đóng trong lúc đồng bộ sau khi tua.");
     }
     session.seekPending = false;
+    session.reconnectAttempts = 0;
     session.reconfiguring = false;
   } catch (error) {
     if (activeCapture !== session || session.stopped || generation !== session.seekGeneration) {
       return;
     }
-    reportDubbingError(session, error);
-    stopCapture(session.sessionId);
+    session.seekPending = false;
+    scheduleLiveReconnect(session, error);
   }
 }
 
@@ -486,6 +681,11 @@ async function updateLiveLanguage(message) {
       throw new Error("Phiên lồng tiếng đã kết thúc.");
     }
     session.targetLanguageCode = message.targetLanguageCode;
+    session.sourceLanguageMatchesTarget = false;
+    session.skipTranslationTurn = false;
+    if (session.originalAudioGain) {
+      session.originalAudioGain.gain.setTargetAtTime(0.12, session.audioContext.currentTime, 0.02);
+    }
     session.reconfiguring = false;
   } catch (error) {
     if (activeCapture === session && !session.stopped) {
@@ -497,6 +697,16 @@ async function updateLiveLanguage(message) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "SET_YOUTUBE_AD_PLAYBACK") {
+    sendResponse(setYouTubeAdPlayback(message));
+    return false;
+  }
+
+  if (message.type === "SET_VIDEO_PLAYBACK_STATE") {
+    sendResponse(setVideoPlaybackState(message));
+    return false;
+  }
+
   if (message.type === "START_LIVE_TRANSLATION") {
     startLiveTranslation(message)
       .then(() => sendResponse({ ok: true }))

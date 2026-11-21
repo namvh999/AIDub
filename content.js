@@ -17,6 +17,7 @@
   let selectedVideo = null;
   let shouldResumeVideo = false;
   let videoListeners = null;
+  let playbackStateSequence = 0;
   let statusHost = null;
   let statusLabel = null;
 
@@ -24,9 +25,22 @@
     if (!statusHost) {
       return;
     }
+    if (!isError || !text) {
+      statusLabel.textContent = "";
+      statusLabel.dataset.error = "false";
+      statusHost.hidden = true;
+      return;
+    }
     statusLabel.textContent = text;
-    statusLabel.dataset.error = String(isError);
-    statusHost.hidden = !text;
+    statusLabel.dataset.error = "true";
+    statusHost.hidden = false;
+  }
+
+  function getErrorMessage(error) {
+    if (/extension context invalidated/i.test(error?.message || "")) {
+      return "Extension vừa được tải lại. Hãy tải lại trang YouTube rồi bật lồng tiếng lại.";
+    }
+    return error?.message || "Không thể bắt đầu lồng tiếng.";
   }
 
   function createStatusHost() {
@@ -180,7 +194,7 @@
     videoListeners = null;
   }
 
-  function stopWhenVideoChanges() {
+  function stopAfterVideoEnds() {
     if (!isDubbingActive || !activeSessionId) {
       return;
     }
@@ -217,16 +231,62 @@
       .catch((error) => console.warn(`Unable to notify the dubbing session about ${type}:`, error));
   }
 
+  function notifyVideoPlaybackState(type, sessionId) {
+    const sequence = ++playbackStateSequence;
+    chrome.runtime.sendMessage({ type, sessionId, sequence })
+      .then((response) => {
+        if (!response?.ok) {
+          console.warn(`Unable to notify the dubbing session about ${type}:`, response?.error);
+        }
+      })
+      .catch((error) => console.warn(`Unable to notify the dubbing session about ${type}:`, error));
+  }
+
+  async function restoreAfterAutomaticReload(recovery) {
+    const deadline = Date.now() + 10000;
+    let recoveryVideo = null;
+    while (Date.now() < deadline) {
+      recoveryVideo = findActiveVideo();
+      if (recoveryVideo && recoveryVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    if (!recoveryVideo || recoveryVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
+      throw new Error("Không tìm thấy video để tự khôi phục lồng tiếng sau khi tải lại trang.");
+    }
+    if (Number.isFinite(recovery.currentTime) && recovery.currentTime >= 0) {
+      recoveryVideo.currentTime = recovery.currentTime;
+    }
+    selectedVideo = recoveryVideo;
+    await requestDubbing(recoveryVideo, false);
+    if (recovery.wasPlaying && recoveryVideo.paused) {
+      await recoveryVideo.play();
+    }
+  }
+
   function attachVideoListeners() {
     detachVideoListeners();
     if (!video) {
       return;
     }
-    videoListeners = ["pause", "ended", "emptied", "loadstart", "error"].map((eventName) => {
-      const listener = () => stopWhenVideoChanges();
-      video.addEventListener(eventName, listener);
-      return [eventName, listener];
-    });
+    const onEnded = () => stopAfterVideoEnds();
+    video.addEventListener("ended", onEnded);
+    videoListeners = [["ended", onEnded]];
+    const onPause = () => {
+      if (isDubbingActive && activeSessionId) {
+        notifyVideoPlaybackState("VIDEO_PAUSED", activeSessionId);
+      }
+    };
+    const onPlaying = () => {
+      if (isDubbingActive && activeSessionId) {
+        notifyVideoPlaybackState("VIDEO_PLAYING", activeSessionId);
+      }
+    };
+    video.addEventListener("pause", onPause);
+    video.addEventListener("playing", onPlaying);
+    videoListeners.push(["pause", onPause], ["playing", onPlaying]);
     const onSeeking = () => {
       if (!isDubbingActive || !activeSessionId || isSeeking) {
         return;
@@ -288,7 +348,7 @@
     } catch (error) {
       createStatusHost();
       resumeVideo();
-      setStatus(error.message, true);
+      setStatus(getErrorMessage(error), true);
     } finally {
       isStartPending = false;
       const nextVideo = pendingPlayingVideo;
@@ -324,8 +384,18 @@
       targetLanguageName = message.targetLanguageName;
       sendResponse({ ok: true });
 
-      setTimeout(() => {
+      setTimeout(async () => {
         if (!autoDubbingEnabled || isDubbingActive || isStartPending) {
+          return;
+        }
+        if (message.recovery) {
+          try {
+            await restoreAfterAutomaticReload(message.recovery);
+          } catch (error) {
+            console.error("Unable to restore dubbing after automatic reload:", error);
+            createStatusHost();
+            setStatus(error.message || "Không thể tự khôi phục lồng tiếng sau khi tải lại trang.", true);
+          }
           return;
         }
         const activeVideo = findActiveVideo();
@@ -336,6 +406,18 @@
           }
         }
       }, 50);
+      return false;
+    }
+    if (message.type === "GET_DUBBING_RECOVERY_STATE") {
+      if (message.sessionId !== activeSessionId || !selectedVideo?.isConnected) {
+        sendResponse({ ok: false, error: "Không tìm thấy phiên video cần khôi phục." });
+        return false;
+      }
+      sendResponse({
+        ok: true,
+        currentTime: selectedVideo.currentTime,
+        wasPlaying: !selectedVideo.paused && !selectedVideo.ended
+      });
       return false;
     }
     if (message.type === "DISABLE_AUTO_DUBBING") {
