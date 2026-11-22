@@ -1,6 +1,15 @@
 # AI Video Translator
 
-Chrome extension Manifest V3 dùng Gemini Live Translation để nghe âm thanh tab và phát giọng dịch gần như trực tiếp. Trên trang đã bật extension, bấm vào video đầu tiên để bắt đầu; các video tiếp theo tự phát trong cùng trang sẽ tự bắt đầu lồng tiếng. Tiếng gốc được giảm âm lượng để nghe giọng Gemini rõ hơn. Extension tự lọc một số request và phần tử quảng cáo trên các website, tự bấm nút bỏ qua quảng cáo YouTube khi nút đó xuất hiện, và tích hợp bộ tải video/media mạnh mẽ cho Telegram Web.
+Chrome extension Manifest V3 dùng Gemini Live Translation để nghe âm thanh tab và phát giọng dịch gần như trực tiếp. Trên trang đã bật extension, bấm vào video đầu tiên để bắt đầu; các video tiếp theo tự phát trong cùng trang sẽ tự bắt đầu lồng tiếng. Tiếng gốc được giảm âm lượng để nghe giọng Gemini rõ hơn. Extension tự lọc một số request và phần tử quảng cáo trên các website, tự bấm nút bỏ qua quảng cáo YouTube khi nút đó xuất hiện, tích hợp bộ tải video/media mạnh mẽ cho Telegram Web, và hỗ trợ mở khóa bỏ mờ cùng tải PDF trên Studocu / Studeersnel.
+
+## Tính năng Studocu Helper (Bỏ mờ & Tải PDF)
+
+Extension tự động hoạt động trên các trang Studocu (`studocu.com`, `studeersnel.nl`, `studocu.vn`, `studocu.id`):
+- **Bỏ mờ tài liệu (Unblur)**: Loại bỏ các lớp phủ mờ (blur), khôi phục lớp chữ (text layer) và lớp hình ảnh (figure layer) sắc nét gốc.
+- **Tự động tải tất cả các trang (Auto-load pages)**: Tự động cuộn và tải trước các trang tài liệu mà không cần phải cuộn tay từng trang.
+- **Xóa banner quảng cáo & giới hạn Premium**: Ẩn các banner mời nâng cấp Premium, pop-up giới hạn xem trước và sign-in wall.
+- **Tải toàn bộ tài liệu dưới dạng PDF**: Tích hợp nút **Download** vào trình đọc tài liệu để gom tất cả các trang và in/lưu thành file PDF hoàn chỉnh chuẩn kích thước trang gốc.
+- **Hiển thị thông báo trang bị khóa**: Với các trang bị khóa chặt từ máy chủ (*premium-locked: server không gửi lớp text cho người dùng miễn phí*), extension hiển thị bản xem trước và thông báo rõ ràng thay vì để trang trắng.
 
 ## Tính năng tải video & media Telegram
 

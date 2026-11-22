@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Gemini Video Dubbing",
-  "version": "1.3.0",
-  "description": "Lồng tiếng video theo thời gian thực bằng Gemini; hỗ trợ tải video Telegram, lọc quảng cáo YouTube và tự bỏ qua quảng cáo Youku.",
+  "version": "1.4.0",
+  "description": "Lồng tiếng video theo thời gian thực bằng Gemini; hỗ trợ tải video Telegram, mở khóa & tải PDF Studocu, lọc quảng cáo YouTube và Youku.",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
@@ -18,9 +18,28 @@
     "https://*/*",
     "https://*.youtube.com/*",
     "https://*.youku.com/*",
-    "https://*.telegram.org/*"
+    "https://*.telegram.org/*",
+    "https://doc-assets.studocu.com/*"
   ],
   "content_scripts": [
+    {
+      "matches": [
+        "https://*.studocu.com/*",
+        "https://*.studeersnel.nl/*",
+        "https://*.studocu.vn/*",
+        "https://*.studocu.id/*"
+      ],
+      "css": ["studocu/style.css"],
+      "js": [
+        "studocu/common.js",
+        "studocu/cleanup.js",
+        "studocu/pages.js",
+        "studocu/download.js",
+        "studocu/main.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    },
     {
       "matches": [
         "https://web.telegram.org/*",

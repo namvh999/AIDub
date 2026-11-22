@@ -212,6 +212,25 @@ button:disabled {
   line-height: 1.4;
 }
 
+#studocu-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #232736;
+}
+
+#studocu-section h2 {
+  margin: 0 0 5px;
+  font-size: 13px;
+}
+
+#studocu-status {
+  min-height: 18px;
+  margin: 0 0 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .pulse-dot {
   width: 7px;
   height: 7px;

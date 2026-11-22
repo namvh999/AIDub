@@ -6,6 +6,7 @@ const btnIcon = document.querySelector("#btn-icon");
 const btnLabel = document.querySelector("#btn-label");
 const statusElement = document.querySelector("#status");
 const adFilterStatusElement = document.querySelector("#ad-filter-status");
+const studocuStatusElement = document.querySelector("#studocu-status");
 
 let currentTabId = null;
 let tabEnabled = false;
@@ -202,6 +203,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     updateUI();
     await loadAdFilterStatus();
+    if (tab?.url && /studocu\.com|studeersnel\.nl/i.test(tab.url)) {
+      if (studocuStatusElement) {
+        studocuStatusElement.textContent = "Đang hoạt động trên trang Studocu này. Nút Download PDF đã sẵn sàng.";
+      }
+    }
     if (dubbingStatusError) {
       showStatus(dubbingStatusError, true);
     }
