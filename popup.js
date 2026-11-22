@@ -5,15 +5,12 @@ const applyLangButton = document.querySelector("#apply-lang-btn");
 const btnIcon = document.querySelector("#btn-icon");
 const btnLabel = document.querySelector("#btn-label");
 const statusElement = document.querySelector("#status");
-const adFilterStatusElement = document.querySelector("#ad-filter-status");
 const studocuStatusElement = document.querySelector("#studocu-status");
 
 let currentTabId = null;
 let tabEnabled = false;
 let enabledLanguageCode = "";
 let isProcessing = false;
-let adFilterStatus = null;
-let adFilterNotice = "";
 
 function showStatus(htmlOrText, isError = false, isActive = false) {
   statusElement.innerHTML = htmlOrText;
@@ -73,34 +70,6 @@ async function sendMessage(message) {
     throw new Error(response?.error || "Không thể thực hiện yêu cầu.");
   }
   return response;
-}
-
-function updateAdFilterUI() {
-  const supported = Boolean(adFilterStatus);
-  if (!supported) {
-    adFilterStatusElement.textContent = adFilterNotice || "Bộ lọc chỉ hoạt động trên trang web HTTP/HTTPS.";
-    return;
-  }
-
-  adFilterStatusElement.textContent = adFilterNotice || [
-    "Tự động lọc đang bật",
-    `${adFilterStatus.pageCount} phần tử trên trang này`,
-    `${adFilterStatus.totalCount} tổng cộng`
-  ].join(" · ");
-}
-
-async function loadAdFilterStatus() {
-  adFilterStatus = null;
-  adFilterNotice = "";
-  try {
-    if (currentTabId === null) {
-      throw new Error("Không tìm thấy tab đang mở.");
-    }
-    adFilterStatus = await sendMessage({ type: "GET_AD_FILTER_STATUS", tabId: currentTabId });
-  } catch (error) {
-    adFilterNotice = error.message;
-  }
-  updateAdFilterUI();
 }
 
 async function startDubbing() {
@@ -202,7 +171,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
     updateUI();
-    await loadAdFilterStatus();
     if (tab?.url && /studocu\.com|studeersnel\.nl/i.test(tab.url)) {
       if (studocuStatusElement) {
         studocuStatusElement.textContent = "Đang hoạt động trên trang Studocu này. Nút Download PDF đã sẵn sàng.";

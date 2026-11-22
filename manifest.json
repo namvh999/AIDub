@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Gemini Video Dubbing",
   "version": "1.4.0",
-  "description": "Lồng tiếng video theo thời gian thực bằng Gemini; hỗ trợ tải video Telegram, mở khóa & tải PDF Studocu, lọc quảng cáo YouTube và Youku.",
+  "description": "Lồng tiếng video theo thời gian thực bằng Gemini; hỗ trợ tải video Telegram, mở khóa & tải PDF Studocu và lọc quảng cáo web.",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
@@ -10,7 +10,8 @@
     "offscreen",
     "scripting",
     "storage",
-    "tabCapture"
+    "tabCapture",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
@@ -57,6 +58,14 @@
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["popup-blocker.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
     },
     {
       "matches": ["https://*.youku.com/*"],

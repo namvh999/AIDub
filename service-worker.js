@@ -38,6 +38,13 @@ const GENERAL_AD_DOMAINS = [
   "lijit.com",
   "33across.com"
 ];
+importScripts("popup-protection.js");
+
+PopupProtection.init(GENERAL_AD_DOMAINS, {
+  getSettings: getAdFilterSettings,
+  isPageOrSitePaused
+});
+
 const YOUTUBE_AD_URL_FILTERS = [
   "||youtube.com/pagead/",
   "||youtube.com/youtubei/v1/player/ad_break",
@@ -377,6 +384,8 @@ function updateAdFilterStats(message, sender) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.remove(["adFilterAiEnabled", "adFilterAiCache"])
+    .catch((error) => console.warn("Unable to remove legacy AI ad-filter settings:", error));
   syncAdFilterRules().catch((error) => console.error("Unable to initialize local ad rules:", error));
 });
 chrome.runtime.onStartup.addListener(() => {
