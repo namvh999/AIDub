@@ -1,6 +1,14 @@
 # AI Video Translator
 
-Chrome extension Manifest V3 dùng Gemini Live Translation để nghe âm thanh tab và phát giọng dịch gần như trực tiếp. Trên trang đã bật extension, bấm vào video đầu tiên để bắt đầu; các video tiếp theo tự phát trong cùng trang sẽ tự bắt đầu lồng tiếng. Tiếng gốc được giảm âm lượng để nghe giọng Gemini rõ hơn. Extension tự lọc một số request và phần tử quảng cáo trên các website, đồng thời tự bấm nút bỏ qua quảng cáo YouTube khi nút đó xuất hiện.
+Chrome extension Manifest V3 dùng Gemini Live Translation để nghe âm thanh tab và phát giọng dịch gần như trực tiếp. Trên trang đã bật extension, bấm vào video đầu tiên để bắt đầu; các video tiếp theo tự phát trong cùng trang sẽ tự bắt đầu lồng tiếng. Tiếng gốc được giảm âm lượng để nghe giọng Gemini rõ hơn. Extension tự lọc một số request và phần tử quảng cáo trên các website, tự bấm nút bỏ qua quảng cáo YouTube khi nút đó xuất hiện, và tích hợp bộ tải video/media mạnh mẽ cho Telegram Web.
+
+## Tính năng tải video & media Telegram
+
+Extension tự động hỗ trợ tải phương tiện trên Telegram Web (`https://web.telegram.org/`, cả bản WebK và WebZ/WebA):
+- **Tải video, GIF và ảnh**: Thêm nút tải trực tiếp vào trình phát media (MediaViewer), story và thanh điều khiển video.
+- **Mở khóa tải từ kênh bị hạn chế**: Mở khóa và hiển thị lại nút tải trên các kênh/nhóm bật tính năng chặn lưu nội dung (*"Restrict saving content"*).
+- **Tải tin nhắn thoại & video tròn (Circle video)**: Hỗ trợ tải voice message và video note trong chat.
+- **Tải luồng mượt mà & không tràn RAM**: Sử dụng Range requests và File System Access API (`showSaveFilePicker`) để stream trực tiếp file về máy kèm thanh tiến trình phần trăm ở góc màn hình; tự động chuyển sang Blob nếu trình duyệt không hỗ trợ File System Access API.
 
 ## Cài đặt và sử dụng
 
